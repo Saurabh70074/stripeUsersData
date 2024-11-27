@@ -1,4 +1,4 @@
-const stripe = require('stripe')('sk_test_mD852NLHpJTFReovnDWf5Jj000qdXwQMAj'); // Replace with your Stripe secret key
+const stripe = require('stripe')(''); // Replace with your Stripe secret key
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const fs = require('fs/promises');
 
