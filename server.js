@@ -1,7 +1,6 @@
-const stripe = require('stripe')(''); // Replace with your Stripe secret key
+const stripe = require('stripe')('sk_test_mD852NLHpJTFReovnDWf5Jj000qdXwQMAj'); // Replace with your Stripe secret key
 const createCsvWriter = require('csv-writer').createObjectCsvWriter;
 const fs = require('fs/promises');
-
 
 (async () => {
   try {
@@ -10,7 +9,7 @@ const fs = require('fs/promises');
     // Fetch active subscriptions from Stripe
     const activeSubscriptions = await stripe.subscriptions.list({
       status: 'active', // Fetch only active subscriptions
-      limit: 5,         // Number of subscriptions to fetch (max: 100)
+      limit: 100,         // Number of subscriptions to fetch (max: 100)
     });
 
     console.log('Active Subscriptions:', activeSubscriptions.data);
@@ -63,17 +62,14 @@ const fs = require('fs/promises');
     const getInvoiceDetails = async (invoiceId) => {
       try {
         const invoice = await stripe.invoices.retrieve(invoiceId);
-        console.log('invoice data', invoice)
         return {
           subtotal: invoice.subtotal,
           totalDiscountAmounts: invoice.total_discount_amounts || 0, // Default to empty array if no discounts
           totalAmount: invoice.total,
         };
-
-        
       } catch (error) {
         console.error(`Error fetching invoice details for ID ${invoiceId}:`, error.message);
-        return { subtotal: null, totalDiscountAmounts: [], totalAmount: null };
+        return { subtotal: null, totalDiscountAmounts: 0, totalAmount: null };
       }
     };
 
@@ -90,7 +86,7 @@ const fs = require('fs/promises');
           return {
             status: checkoutSession.status,
             id: checkoutSession.id,
-            completeJson: checkoutSession,
+            completeJson: JSON.stringify(checkoutSession), // Full JSON of checkout session
           };
         } else {
           console.log(`No checkout session found for Subscription ${subscriptionId}`);
@@ -106,14 +102,39 @@ const fs = require('fs/promises');
     const getPaymentIntentDetails = async (paymentIntentId) => {
       try {
         const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
-        return paymentIntent; // Return the complete payment intent JSON
+        return JSON.stringify(paymentIntent); // Return the complete payment intent JSON as a string
       } catch (error) {
         console.error(`Error fetching payment intent ${paymentIntentId}:`, error.message);
         return null;
       }
     };
 
+    // Prepare the CSV Writer
+    const csvWriter = createCsvWriter({
+      path: 'invoices_updated.csv', // Output CSV file path
+      header: [
+        { id: 'subscriptionId', title: 'Subscription ID' },
+        { id: 'customerId', title: 'Customer ID' },
+        { id: 'customerEmail', title: 'Customer Email' },
+        { id: 'firstInvoiceId', title: 'First Invoice ID' },
+        { id: 'lastInvoiceId', title: 'Last Invoice ID' },
+        { id: 'firstInvoiceSubtotal', title: 'First Invoice Subtotal' },
+        { id: 'firstInvoiceTotal', title: 'First Invoice Total' },
+        { id: 'firstInvoiceDiscounts', title: 'First Invoice Discounts' },
+        { id: 'lastInvoiceSubtotal', title: 'Last Invoice Subtotal' },
+        { id: 'lastInvoiceTotal', title: 'Last Invoice Total' },
+        { id: 'lastInvoiceDiscounts', title: 'Last Invoice Discounts' },
+        { id: 'checkoutSessionStatus', title: 'Checkout Session Status' },
+        { id: 'checkoutSessionId', title: 'Checkout Session ID' },
+        { id: 'checkoutSessionCompleteJson', title: 'Checkout Session Complete Json' },
+        { id: 'paymentIntentCreated', title: 'Payment Intent Created' },
+        { id: 'paymentIntentCompleteJson', title: 'Payment Intent Complete Json' },
+      ],
+    });
+
     // Update the invoices data with additional details
+    const csvData = [];
+
     for (const invoice of invoicesDataFromFile) {
       const firstInvoiceId = invoice.firstInvoiceId;
       const lastInvoiceId = invoice.lastInvoiceId;
@@ -138,41 +159,31 @@ const fs = require('fs/promises');
         }
       }
 
-      console.log('firstInvoiceDetails:', firstInvoiceDetails);
-      console.log('lastInvoiceDetails:', lastInvoiceDetails);
-      console.log('checkoutSessionDetails:', checkoutSessionDetails);
-      console.log('paymentIntentDetails:', paymentIntentDetails);
-
-      // Add details to the event section
-      invoice.event = invoice.event || {};
-      invoice.event.secondColumn = {
-        firstInvoice: {
-          invoiceId: firstInvoiceId,
-          total: firstInvoiceDetails.totalAmount,
-          subtotal: firstInvoiceDetails.subtotal,
-          totalDiscountAmounts: firstInvoiceDetails.totalDiscountAmounts,
-        },
-        lastInvoice: {
-          invoiceId: lastInvoiceId,
-          total: lastInvoiceDetails.totalAmount,
-          subtotal: lastInvoiceDetails.subtotal,
-          totalDiscountAmounts: lastInvoiceDetails.totalDiscountAmounts,
-        },
-        checkoutSession: {
-          status: checkoutSessionDetails.status,
-          id: checkoutSessionDetails.id,
-          completeJson: checkoutSessionDetails.completeJson,
-        },
-        paymentIntent: {
-            created: paymentIntentDetails.created,
-            completeJson: paymentIntentDetails
-        }, // Include the full payment intent JSON
-      };
+      // Add all necessary details to csvData
+      csvData.push({
+        subscriptionId: invoice.subscriptionId,
+        customerId: invoice.customerId,
+        customerEmail: invoice.customerEmail,
+        firstInvoiceId: firstInvoiceId,
+        lastInvoiceId: lastInvoiceId,
+        firstInvoiceSubtotal: firstInvoiceDetails.subtotal,
+        firstInvoiceTotal: firstInvoiceDetails.totalAmount,
+        firstInvoiceDiscounts: JSON.stringify(firstInvoiceDetails.totalDiscountAmounts),
+        lastInvoiceSubtotal: lastInvoiceDetails.subtotal,
+        lastInvoiceTotal: lastInvoiceDetails.totalAmount,
+        lastInvoiceDiscounts: JSON.stringify(lastInvoiceDetails.totalDiscountAmounts),
+        checkoutSessionStatus: checkoutSessionDetails.status,
+        checkoutSessionId: checkoutSessionDetails.id,
+        checkoutSessionCompleteJson: checkoutSessionDetails.completeJson,
+        paymentIntentCreated: paymentIntentDetails.created,
+        paymentIntentCompleteJson: paymentIntentDetails || 'N/A',
+      });
     }
 
-    // Save the enriched invoices data
-    await fs.writeFile('invoices_updated.json', JSON.stringify(invoicesDataFromFile, null, 2), 'utf8');
-    console.log('Invoices data with event section and checkout session details saved to invoices_updated.json');
+    // Write to CSV
+    await csvWriter.writeRecords(csvData);
+
+    console.log('Invoices data with all details saved to invoices_updated.csv');
   } catch (error) {
     console.error('Error processing subscriptions:', error);
   }
